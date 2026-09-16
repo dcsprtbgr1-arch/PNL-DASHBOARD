@@ -1,0 +1,625 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Dashboard Database PNL</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  </head>
+  <body class="bg-slate-100 text-slate-800 font-sans antialiased min-h-screen">
+    <div class="flex flex-col min-h-screen">
+      <header class="bg-slate-900 text-white shadow-lg sticky top-0 z-50">
+        <div class="container mx-auto px-6 py-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div class="flex items-center gap-3">
+            <div class="p-2.5 bg-blue-600 rounded-xl shadow-md">
+              <i class="fa-solid fa-chart-pie text-2xl"></i>
+            </div>
+            <div>
+              <h1 class="text-xl font-bold tracking-wide">Database & Dashboard PNL</h1>
+              <p class="text-xs text-slate-400">Analisis Nilai SOBIOA & Komparasi Periode</p>
+            </div>
+          </div>
+          <div class="flex items-center gap-2">
+            <button onclick="loadDashboard()" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-lg shadow transition flex items-center gap-2">
+              <i class="fa-solid fa-arrows-rotate"></i> Refresh Data
+            </button>
+            <label class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold rounded-lg shadow transition flex items-center gap-2 cursor-pointer">
+              <i class="fa-solid fa-file-csv"></i> Upload File CSV
+              <input type="file" id="csvFileInput" accept=".csv" onchange="handleFileUpload(event)" class="hidden" />
+            </label>
+          </div>
+        </div>
+      </header>
+
+      <main class="container mx-auto px-6 py-6 flex-grow space-y-8">
+        <section class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+          <div class="flex items-center justify-between mb-4 border-b pb-3">
+            <div>
+              <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2"><i class="fa-solid fa-chart-line text-blue-600"></i> Dashboard Akumulasi SOBIOA</h2>
+              <p class="text-xs text-slate-500">Total akumulasi nilai SOBIOA berdasarkan Bulan dan Tahun</p>
+            </div>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <div class="bg-slate-50 p-4 rounded-xl border border-slate-200">
+              <p class="text-xs font-semibold text-slate-500 uppercase">Total Akumulasi SOBIOA</p>
+              <h3 id="cardTotalSobioa" class="text-2xl font-bold text-blue-600 mt-1">Rp 0</h3>
+            </div>
+            <div class="bg-slate-50 p-4 rounded-xl border border-slate-200">
+              <p class="text-xs font-semibold text-slate-500 uppercase">Total Baris Data</p>
+              <h3 id="cardTotalRows" class="text-2xl font-bold text-slate-800 mt-1">0</h3>
+            </div>
+            <div class="bg-slate-50 p-4 rounded-xl border border-slate-200">
+              <p class="text-xs font-semibold text-slate-500 uppercase">Jumlah Akun Unik</p>
+              <h3 id="cardTotalAccounts" class="text-2xl font-bold text-slate-800 mt-1">0</h3>
+            </div>
+          </div>
+          <div class="relative h-72 w-full">
+            <canvas id="chartAccumulated"></canvas>
+          </div>
+        </section>
+
+        <section class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+          <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6 border-b pb-3">
+            <div>
+              <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2"><i class="fa-solid fa-filter text-emerald-600"></i> Dashboard Monthly per Nama Akun</h2>
+              <p class="text-xs text-slate-500">Visualisasi data per bulan berdasarkan subjek Nama Akun yang dipilih</p>
+            </div>
+            <div class="w-full md:w-80">
+              <label class="block text-xs font-semibold uppercase text-slate-500 mb-1">Filter Nama Akun</label>
+              <select id="selectNamaAkun" onchange="loadAndRenderAccountChart()" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-slate-50">
+                <option value="">-- Pilih Nama Akun --</option>
+              </select>
+            </div>
+          </div>
+          <div class="relative h-72 w-full">
+            <canvas id="chartAccountMonthly"></canvas>
+          </div>
+        </section>
+
+        <section class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+          <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6 border-b pb-3">
+            <div>
+              <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2"><i class="fa-solid fa-scale-balanced text-indigo-600"></i> Komparasi Selisih SOBIOA</h2>
+              <p class="text-xs text-slate-500">Perbandingan SOBIOA antara Periode Awal dan Periode Akhir</p>
+            </div>
+            <button onclick="downloadCSV()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold rounded-lg shadow transition flex items-center gap-2">
+              <i class="fa-solid fa-file-csv"></i> Download Hasil (CSV)
+            </button>
+          </div>
+
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6 bg-slate-50 p-4 rounded-xl border border-slate-200">
+            <div>
+              <label class="block text-xs font-semibold uppercase text-slate-500 mb-1">Bulan Awal</label>
+              <select id="filterBulanAwal" class="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-blue-500"></select>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold uppercase text-slate-500 mb-1">Tahun Awal</label>
+              <select id="filterTahunAwal" class="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-blue-500"></select>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold uppercase text-slate-500 mb-1">Bulan Akhir</label>
+              <select id="filterBulanAkhir" class="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-blue-500"></select>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold uppercase text-slate-500 mb-1">Tahun Akhir</label>
+              <select id="filterTahunAkhir" class="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-blue-500"></select>
+            </div>
+          </div>
+
+          <div class="flex justify-end mb-6">
+            <button onclick="loadAndRenderComparison()" class="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold rounded-lg shadow transition flex items-center gap-2">
+              <i class="fa-solid fa-magnifying-glass"></i> Terapkan Filter Komparasi
+            </button>
+          </div>
+
+          <div class="space-y-6">
+            <div>
+              <h3 class="text-sm font-bold text-emerald-700 uppercase tracking-wide mb-3 flex items-center gap-2"><i class="fa-solid fa-arrow-trend-up"></i> Top 10 Selisih Tertinggi (Kenaikan Terbesar)</h3>
+              <div class="overflow-x-auto rounded-xl border border-slate-200">
+                <table class="w-full text-left border-collapse text-sm">
+                  <thead class="bg-emerald-50 text-emerald-900 font-semibold text-xs uppercase border-b border-slate-200">
+                    <tr>
+                      <th class="p-3">Nama Akun</th>
+                      <th class="p-3 text-right">SOBIOA (Periode Awal)</th>
+                      <th class="p-3 text-right">SOBIOA (Periode Akhir)</th>
+                      <th class="p-3 text-right">Selisih</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tableTopHighest" class="divide-y divide-slate-100 text-slate-700">
+                    <tr>
+                      <td colspan="4" class="text-center py-4 text-slate-400">Silakan terapkan filter untuk menampilkan data.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div>
+              <h3 class="text-sm font-bold text-red-700 uppercase tracking-wide mb-3 flex items-center gap-2"><i class="fa-solid fa-arrow-trend-down"></i> Top 10 Selisih Terendah (Penurunan Terbesar)</h3>
+              <div class="overflow-x-auto rounded-xl border border-slate-200">
+                <table class="w-full text-left border-collapse text-sm">
+                  <thead class="bg-red-50 text-red-900 font-semibold text-xs uppercase border-b border-slate-200">
+                    <tr>
+                      <th class="p-3">Nama Akun</th>
+                      <th class="p-3 text-right">SOBIOA (Periode Awal)</th>
+                      <th class="p-3 text-right">SOBIOA (Periode Akhir)</th>
+                      <th class="p-3 text-right">Selisih</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tableTopLowest" class="divide-y divide-slate-100 text-slate-700">
+                    <tr>
+                      <td colspan="4" class="text-center py-4 text-slate-400">Silakan terapkan filter untuk menampilkan data.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div id="uploadProgress" class="hidden fixed bottom-6 right-6 bg-white p-5 rounded-2xl shadow-2xl border border-slate-200 z-50 w-80">
+      <div class="flex items-center gap-3 mb-3">
+        <div class="p-2 bg-blue-100 rounded-lg">
+          <i class="fa-solid fa-cloud-arrow-up text-blue-600"></i>
+        </div>
+        <div class="flex-1 min-w-0">
+          <p class="text-sm font-bold text-slate-800">Mengunggah Data</p>
+          <p id="uploadFileName" class="text-xs text-slate-500 truncate">-</p>
+        </div>
+      </div>
+      <div class="w-full bg-slate-200 rounded-full h-2.5 mb-2">
+        <div id="progressBar" class="bg-blue-600 h-2.5 rounded-full transition-all duration-300" style="width: 0%"></div>
+      </div>
+      <div class="flex justify-between text-xs text-slate-500">
+        <span id="progressText">0 / 0 baris</span>
+        <span id="progressPercent">0%</span>
+      </div>
+    </div>
+
+    <script>
+      const SUPABASE_URL = "https://xturrmfqpbpcsbmckzru.supabase.co";
+      const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inh0dXJybWZxcGJwY3NibWNrenJ1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk1Mzk2MjcsImV4cCI6MjEwNTExNTYyN30.c5flgZoTIanqJWGYpIRWMvB2vvt6wi6Uw8nzm9XYpqc";
+      const _supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+      let lastComparisonResult = [];
+      let chartAccumulatedInstance = null;
+      let chartAccountMonthlyInstance = null;
+      const listBulan = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+
+      window.onload = () => loadDashboard();
+
+      async function loadDashboard() {
+        showLoading("Memuat Data...", "Mengambil data dari database");
+        try {
+          await Promise.all([loadAndRenderSummary(), loadAndRenderAccumulated(), loadFilters()]);
+          const sel = document.getElementById("selectNamaAkun");
+          if (sel.options.length > 0 && sel.value) {
+            await loadAndRenderAccountChart();
+          }
+          await loadAndRenderComparison();
+          Swal.close();
+        } catch (err) {
+          Swal.fire("Gagal!", err.message || "Gagal mengambil data dari Supabase.", "error");
+          console.error(err);
+        }
+      }
+
+      async function loadAndRenderSummary() {
+        const { data, error } = await _supabase.rpc("get_pnl_summary");
+        if (error) throw error;
+        if (!data || data.length === 0) return;
+        const row = data[0];
+        document.getElementById("cardTotalSobioa").innerText = formatCurrency(row.total_sobioa);
+        document.getElementById("cardTotalRows").innerText = Number(row.total_rows).toLocaleString("id-ID");
+        document.getElementById("cardTotalAccounts").innerText = Number(row.total_accounts).toLocaleString("id-ID");
+      }
+
+      async function loadAndRenderAccumulated() {
+        const { data, error } = await _supabase.rpc("get_pnl_accumulated");
+        if (error) throw error;
+        if (!data || data.length === 0) return;
+
+        const labels = data.map((r) => `${r.tahun} - ${r.bulan}`);
+        const values = data.map((r) => Number(r.total_sobioa));
+
+        if (chartAccumulatedInstance) chartAccumulatedInstance.destroy();
+        const ctx = document.getElementById("chartAccumulated").getContext("2d");
+        chartAccumulatedInstance = new Chart(ctx, {
+          type: "line",
+          data: {
+            labels,
+            datasets: [
+              {
+                label: "Akumulasi SOBIOA",
+                data: values,
+                borderColor: "#2563eb",
+                backgroundColor: "rgba(37, 99, 235, 0.1)",
+                fill: true,
+                tension: 0.3,
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+              y: { ticks: { callback: (v) => "Rp " + (v / 1e6).toFixed(0) + "M" } },
+            },
+          },
+        });
+      }
+
+      async function loadFilters() {
+        const [filtersRes, accountsRes, yearsRes] = await Promise.all([_supabase.rpc("get_pnl_filters"), _supabase.rpc("get_pnl_accounts"), _supabase.rpc("get_pnl_years")]);
+
+        if (filtersRes.error) throw filtersRes.error;
+        if (accountsRes.error) throw accountsRes.error;
+        if (yearsRes.error) throw yearsRes.error;
+
+        const selectNamaAkun = document.getElementById("selectNamaAkun");
+        const currentVal = selectNamaAkun.value;
+        selectNamaAkun.innerHTML = '<option value="">-- Pilih Nama Akun --</option>';
+        (accountsRes.data || []).forEach((r) => {
+          const v = r.nama_akun.trim();
+          selectNamaAkun.innerHTML += `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`;
+        });
+        if (currentVal) selectNamaAkun.value = currentVal;
+
+        const bAwal = document.getElementById("filterBulanAwal");
+        const bAkhir = document.getElementById("filterBulanAkhir");
+        bAwal.innerHTML = "";
+        bAkhir.innerHTML = "";
+        listBulan.forEach((b) => {
+          bAwal.innerHTML += `<option value="${b}">${b}</option>`;
+          bAkhir.innerHTML += `<option value="${b}">${b}</option>`;
+        });
+
+        const tAwal = document.getElementById("filterTahunAwal");
+        const tAkhir = document.getElementById("filterTahunAkhir");
+        tAwal.innerHTML = "";
+        tAkhir.innerHTML = "";
+        const years = (yearsRes.data || []).map((r) => r.tahun).sort();
+        years.forEach((t) => {
+          tAwal.innerHTML += `<option value="${t}">${t}</option>`;
+          tAkhir.innerHTML += `<option value="${t}">${t}</option>`;
+        });
+
+        if (listBulan.length > 0) {
+          bAwal.value = listBulan[0];
+          bAkhir.value = listBulan[listBulan.length - 1];
+        }
+        if (years.length > 0) {
+          tAwal.value = years[0];
+          tAkhir.value = years[years.length - 1];
+        }
+      }
+
+      async function loadAndRenderAccountChart() {
+        const selectedAkun = document.getElementById("selectNamaAkun").value;
+        if (!selectedAkun) return;
+
+        showLoading("Memuat Data Akun...", `Mengambil data ${selectedAkun}`);
+        try {
+          const { data, error } = await _supabase.rpc("get_pnl_account_monthly", { p_nama_akun: selectedAkun });
+          if (error) throw error;
+          Swal.close();
+
+          const monthlyMap = {};
+          listBulan.forEach((b) => (monthlyMap[b] = 0));
+          (data || []).forEach((r) => {
+            if (monthlyMap.hasOwnProperty(r.bulan)) {
+              monthlyMap[r.bulan] = Number(r.total_sobioa);
+            }
+          });
+
+          const labels = listBulan;
+          const values = listBulan.map((b) => monthlyMap[b] || 0);
+
+          if (chartAccountMonthlyInstance) chartAccountMonthlyInstance.destroy();
+          const ctx = document.getElementById("chartAccountMonthly").getContext("2d");
+          chartAccountMonthlyInstance = new Chart(ctx, {
+            type: "bar",
+            data: {
+              labels,
+              datasets: [
+                {
+                  label: `SOBIOA (${selectedAkun})`,
+                  data: values,
+                  backgroundColor: "#10b981",
+                  borderRadius: 6,
+                },
+              ],
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: { legend: { display: true } },
+              scales: {
+                y: { ticks: { callback: (v) => "Rp " + (v / 1e6).toFixed(0) + "M" } },
+              },
+            },
+          });
+        } catch (err) {
+          Swal.fire("Gagal!", err.message || "Gagal mengambil data akun.", "error");
+          console.error(err);
+        }
+      }
+
+      async function loadAndRenderComparison() {
+        const bAwal = document.getElementById("filterBulanAwal").value;
+        const tAwal = document.getElementById("filterTahunAwal").value;
+        const bAkhir = document.getElementById("filterBulanAkhir").value;
+        const tAkhir = document.getElementById("filterTahunAkhir").value;
+
+        if (!bAwal || !tAwal || !bAkhir || !tAkhir) return;
+
+        try {
+          const { data, error } = await _supabase.rpc("get_pnl_comparison", {
+            p_bulan_awal: bAwal,
+            p_tahun_awal: tAwal,
+            p_bulan_akhir: bAkhir,
+            p_tahun_akhir: tAkhir,
+          });
+          if (error) throw error;
+
+          lastComparisonResult = (data || []).map((r) => ({
+            nama_akun: r.nama_akun,
+            sobioaAwal: Number(r.sobioa_awal),
+            sobioaAkhir: Number(r.sobioa_akhir),
+            selisih: Number(r.selisih),
+          }));
+
+          const sortedHighest = [...lastComparisonResult].sort((a, b) => b.selisih - a.selisih).slice(0, 10);
+          const sortedLowest = [...lastComparisonResult].sort((a, b) => a.selisih - b.selisih).slice(0, 10);
+
+          renderTable("tableTopHighest", sortedHighest);
+          renderTable("tableTopLowest", sortedLowest);
+        } catch (err) {
+          console.error(err);
+        }
+      }
+
+      async function handleFileUpload(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+        document.getElementById("csvFileInput").value = "";
+
+        if (!file.name.endsWith(".csv")) {
+          Swal.fire("Format Salah", "Harap unggah file berformat .csv!", "warning");
+          return;
+        }
+
+        showLoading("Membaca File...", `Sedang membaca ${file.name}`);
+        try {
+          const csvContent = await readFileAsText(file);
+          const csvRows = parseCSV(csvContent);
+
+          if (csvRows.length < 2) {
+            Swal.fire("Kosong", "File CSV kosong atau hanya berisi header.", "warning");
+            return;
+          }
+
+          const dataRows = csvRows.slice(1).filter((r) => r.length >= 14);
+
+          const mappedRows = dataRows.map((row) => ({
+            bulan: (row[0] || "").trim(),
+            tahun: (row[1] || "").trim(),
+            glsource: (row[2] || "").trim(),
+            glcat: (row[3] || "").trim(),
+            gldate: (row[4] || "").trim(),
+            segment4: (row[5] || "").trim(),
+            nama_akun: (row[6] || "").trim(),
+            segment5: (row[7] || "").trim(),
+            segment6: (row[8] || "").trim(),
+            segment7: (row[9] || "").trim(),
+            gldesc: (row[10] || "").trim(),
+            acctdr: parseFloat((row[11] || "0").replace(/,/g, "")) || 0,
+            acctcr: parseFloat((row[12] || "0").replace(/,/g, "")) || 0,
+            sobioa: parseFloat((row[13] || "0").replace(/,/g, "")) || 0,
+          }));
+
+          Swal.close();
+          await uploadParallel(mappedRows, file.name);
+        } catch (err) {
+          Swal.fire("Gagal!", "Gagal memproses file: " + (err.message || err), "error");
+          console.error(err);
+        }
+      }
+
+      async function uploadParallel(rows, fileName) {
+        const BATCH_SIZE = 500;
+        const CONCURRENT = 5;
+        const chunks = [];
+
+        for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+          chunks.push(rows.slice(i, i + BATCH_SIZE));
+        }
+
+        showProgressBar(fileName, rows.length);
+        let totalUploaded = 0;
+        let totalErrors = 0;
+
+        for (let i = 0; i < chunks.length; i += CONCURRENT) {
+          const batch = chunks.slice(i, i + CONCURRENT);
+
+          const results = await Promise.allSettled(
+            batch.map((chunk) =>
+              _supabase.from("pnl_data").upsert(chunk, {
+                onConflict: "bulan,tahun,glsource,glcat,gldate,segment4,nama_akun,segment5,segment6,segment7,gldesc,acctdr,acctcr,sobioa",
+                ignoreDuplicates: true,
+              }),
+            ),
+          );
+
+          for (let j = 0; j < results.length; j++) {
+            const r = results[j];
+            if (r.status === "fulfilled" && !r.value.error) {
+              totalUploaded += batch[j].length;
+            } else {
+              totalErrors++;
+              console.error("Batch upload error:", r.status === "rejected" ? r.reason : r.value.error);
+            }
+          }
+
+          updateProgress(totalUploaded, rows.length);
+        }
+
+        hideProgressBar();
+
+        if (totalErrors > 0) {
+          Swal.fire("Sebagian Gagal", `${totalUploaded.toLocaleString("id-ID")} baris berhasil, ${totalErrors} batch gagal.`, "warning").then(() => loadDashboard());
+        } else {
+          Swal.fire("Berhasil!", `${totalUploaded.toLocaleString("id-ID")} baris data berhasil diunggah!`, "success").then(() => loadDashboard());
+        }
+      }
+
+      function parseCSV(text) {
+        if (text.charCodeAt(0) === 0xfeff) text = text.substring(1);
+        const rows = [];
+        let row = [];
+        let field = "";
+        let inQuotes = false;
+
+        for (let i = 0; i < text.length; i++) {
+          const ch = text[i];
+          const next = text[i + 1];
+
+          if (inQuotes) {
+            if (ch === '"') {
+              if (next === '"') {
+                field += '"';
+                i++;
+              } else {
+                inQuotes = false;
+              }
+            } else {
+              field += ch;
+            }
+          } else {
+            if (ch === '"') {
+              inQuotes = true;
+            } else if (ch === ",") {
+              row.push(field);
+              field = "";
+            } else if (ch === "\r") {
+              if (next === "\n") i++;
+              row.push(field);
+              field = "";
+              if (row.length > 0) rows.push(row);
+              row = [];
+            } else if (ch === "\n") {
+              row.push(field);
+              field = "";
+              if (row.length > 0) rows.push(row);
+              row = [];
+            } else {
+              field += ch;
+            }
+          }
+        }
+
+        if (field || row.length > 0) {
+          row.push(field);
+          if (row.length > 0) rows.push(row);
+        }
+
+        return rows;
+      }
+
+      function downloadCSV() {
+        if (!lastComparisonResult || lastComparisonResult.length === 0) {
+          Swal.fire("Peringatan", "Tidak ada data komparasi untuk diunduh.", "warning");
+          return;
+        }
+
+        let csvContent = "\uFEFFNama Akun,SOBIOA (Awal),SOBIOA (Akhir),Selisih\n";
+        lastComparisonResult.forEach((row) => {
+          let cleanAkun = '"' + row.nama_akun.replace(/"/g, '""') + '"';
+          csvContent += `${cleanAkun},${row.sobioaAwal},${row.sobioaAkhir},${row.selisih}\n`;
+        });
+
+        const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+        const link = document.createElement("a");
+        const url = URL.createObjectURL(blob);
+        link.setAttribute("href", url);
+        link.setAttribute("download", `Komparasi_PNL_${new Date().toISOString().slice(0, 10)}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+
+      function renderTable(elementId, rows) {
+        const tbody = document.getElementById(elementId);
+        tbody.innerHTML = "";
+        if (rows.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="4" class="text-center py-4 text-slate-400">Tidak ada data ditemukan.</td></tr>';
+          return;
+        }
+        rows.forEach((r) => {
+          const badgeColor = r.selisih >= 0 ? "text-emerald-600 font-semibold" : "text-red-600 font-semibold";
+          tbody.innerHTML += `
+          <tr class="hover:bg-slate-50 transition border-b border-slate-100">
+            <td class="p-3 font-medium">${escapeHtml(r.nama_akun)}</td>
+            <td class="p-3 text-right font-mono">${formatCurrency(r.sobioaAwal)}</td>
+            <td class="p-3 text-right font-mono">${formatCurrency(r.sobioaAkhir)}</td>
+            <td class="p-3 text-right font-mono ${badgeColor}">${formatCurrency(r.selisih)}</td>
+          </tr>`;
+        });
+      }
+
+      function readFileAsText(file) {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = (e) => resolve(e.target.result);
+          reader.onerror = () => reject(new Error("Gagal membaca file"));
+          reader.readAsText(file);
+        });
+      }
+
+      function showProgressBar(fileName, totalRows) {
+        const el = document.getElementById("uploadProgress");
+        el.classList.remove("hidden");
+        document.getElementById("uploadFileName").textContent = fileName;
+        document.getElementById("progressBar").style.width = "0%";
+        document.getElementById("progressText").textContent = `0 / ${totalRows.toLocaleString("id-ID")} baris`;
+        document.getElementById("progressPercent").textContent = "0%";
+      }
+
+      function updateProgress(uploaded, total) {
+        const pct = Math.round((uploaded / total) * 100);
+        document.getElementById("progressBar").style.width = pct + "%";
+        document.getElementById("progressText").textContent = `${uploaded.toLocaleString("id-ID")} / ${total.toLocaleString("id-ID")} baris`;
+        document.getElementById("progressPercent").textContent = pct + "%";
+      }
+
+      function hideProgressBar() {
+        document.getElementById("uploadProgress").classList.add("hidden");
+      }
+
+      function showLoading(title, text) {
+        Swal.fire({
+          title,
+          text,
+          allowOutsideClick: false,
+          didOpen: () => Swal.showLoading(),
+        });
+      }
+
+      function formatCurrency(val) {
+        const num = typeof val === "number" ? val : parseFloat(String(val).replace(/,/g, "")) || 0;
+        return "Rp " + num.toLocaleString("id-ID", { maximumFractionDigits: 0 });
+      }
+
+      function escapeHtml(str) {
+        const map = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" };
+        return String(str).replace(/[&<>"']/g, (c) => map[c]);
+      }
+    </script>
+  </body>
+</html>
