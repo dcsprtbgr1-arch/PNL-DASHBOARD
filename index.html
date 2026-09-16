@@ -8,6 +8,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
   </head>
   <body class="bg-slate-100 text-slate-800 font-sans antialiased min-h-screen">
     <div class="flex flex-col min-h-screen">
@@ -176,7 +177,7 @@
         <div id="progressBar" class="bg-blue-600 h-2.5 rounded-full transition-all duration-300" style="width: 0%"></div>
       </div>
       <div class="flex justify-between text-xs text-slate-500">
-        <span id="progressText">0 / 0 baris</span>
+        <span id="progressText">0 / 0 batch</span>
         <span id="progressPercent">0%</span>
       </div>
     </div>
@@ -397,7 +398,7 @@
 
         showLoading("Membaca File...", `Sedang membaca ${file.name}`);
         try {
-          const csvContent = await readFileAsText(file);
+          let csvContent = await readFileAsText(file);
           const csvRows = parseCSV(csvContent);
 
           if (csvRows.length < 2) {
@@ -423,6 +424,9 @@
             acctcr: parseFloat((row[12] || "0").replace(/,/g, "")) || 0,
             sobioa: parseFloat((row[13] || "0").replace(/,/g, "")) || 0,
           }));
+          csvRows.length = 0;
+          dataRows.length = 0;
+          csvContent = null;
 
           Swal.close();
           await uploadParallel(mappedRows, file.name);
@@ -435,101 +439,102 @@
       async function uploadParallel(rows, fileName) {
         const BATCH_SIZE = 500;
         const CONCURRENT = 5;
-        const chunks = [];
+        const MAX_RETRY = 3;
 
-        for (let i = 0; i < rows.length; i += BATCH_SIZE) {
-          chunks.push(rows.slice(i, i + BATCH_SIZE));
-        }
+        const { data: beforeData } = await _supabase.rpc("get_pnl_summary");
+        const beforeCount = beforeData && beforeData[0] ? Number(beforeData[0].total_rows) : 0;
 
-        showProgressBar(fileName, rows.length);
-        let totalUploaded = 0;
-        let totalErrors = 0;
+        const totalBatches = Math.ceil(rows.length / BATCH_SIZE);
+        let processedBatches = 0;
+        let succeededBatches = 0;
+        let failedChunks = [];
 
-        for (let i = 0; i < chunks.length; i += CONCURRENT) {
-          const batch = chunks.slice(i, i + CONCURRENT);
+        showProgressBar(fileName, totalBatches);
+
+        for (let start = 0; start < rows.length; start += BATCH_SIZE * CONCURRENT) {
+          const batchChunks = [];
+          for (let i = start; i < Math.min(rows.length, start + BATCH_SIZE * CONCURRENT); i += BATCH_SIZE) {
+            batchChunks.push(rows.slice(i, i + BATCH_SIZE));
+          }
 
           const results = await Promise.allSettled(
-            batch.map((chunk) =>
-              _supabase.from("pnl_data").upsert(chunk, {
-                onConflict: "bulan,tahun,glsource,glcat,gldate,segment4,nama_akun,segment5,segment6,segment7,gldesc,acctdr,acctcr,sobioa",
-                ignoreDuplicates: true,
-              }),
-            ),
+            batchChunks.map(async (chunk) => {
+              let lastError = null;
+              for (let attempt = 1; attempt <= MAX_RETRY; attempt++) {
+                try {
+                  const { error } = await _supabase.from("pnl_data").upsert(chunk, {
+                    onConflict: "dedup_key",
+                    ignoreDuplicates: true,
+                  });
+                  if (error) {
+                    lastError = error;
+                    await sleep(1000 * attempt);
+                  } else {
+                    return { ok: true, error: null };
+                  }
+                } catch (e) {
+                  lastError = e;
+                  await sleep(1000 * attempt);
+                }
+              }
+              return { ok: false, error: lastError };
+            }),
           );
 
           for (let j = 0; j < results.length; j++) {
+            processedBatches++;
             const r = results[j];
-            if (r.status === "fulfilled" && !r.value.error) {
-              totalUploaded += batch[j].length;
+            if (r.status === "fulfilled" && r.value.ok) {
+              succeededBatches++;
             } else {
-              totalErrors++;
-              console.error("Batch upload error:", r.status === "rejected" ? r.reason : r.value.error);
+              failedChunks.push({
+                index: start + j * BATCH_SIZE,
+                error: r.status === "rejected" ? (r.reason && r.reason.message) || r.reason : (r.value.error && r.value.error.message) || r.value.error,
+              });
             }
           }
 
-          updateProgress(totalUploaded, rows.length);
+          updateProgress(processedBatches, totalBatches);
         }
 
         hideProgressBar();
 
-        if (totalErrors > 0) {
-          Swal.fire("Sebagian Gagal", `${totalUploaded.toLocaleString("id-ID")} baris berhasil, ${totalErrors} batch gagal.`, "warning").then(() => loadDashboard());
+        const { data: afterData } = await _supabase.rpc("get_pnl_summary");
+        const afterCount = afterData && afterData[0] ? Number(afterData[0].total_rows) : 0;
+        const newRows = Math.max(0, afterCount - beforeCount);
+        const parsedRows = rows.length;
+
+        const resumeInfo = `File diparsing: ${parsedRows.toLocaleString("id-ID")} baris. Data sebelum: ${beforeCount.toLocaleString("id-ID")} baris. Total database: ${afterCount.toLocaleString("id-ID")} baris.`;
+
+        let failedInfo = "";
+        if (failedChunks.length > 0) {
+          const errMsg = failedChunks[0].error ? String(failedChunks[0].error).slice(0, 300) : "tidak diketahui";
+          failedInfo = ` ${failedChunks.length} batch gagal setelah 3x percobaan. Contoh error: "${errMsg}". Upload ulang akan melengkapi data (duplikat dilewati).`;
+          console.error("FAILED CHUNKS:", failedChunks);
+        }
+
+        const suspicious = newRows === 0 && afterCount === beforeCount && parsedRows > beforeCount + 1000;
+        if (suspicious) {
+          failedInfo += ` PERINGATAN: parsed ${parsedRows.toLocaleString("id-ID")} baris tapi tidak ada satupun yang masuk — kemungkinan batch dianggap duplikat secara keliru atau error tersembunyi. Coba periksa pesan error di console browser (F12).`;
+        }
+
+        if (failedChunks.length > 0) {
+          if (newRows > 0) {
+            Swal.fire("Sebagian Gagal", `${resumeInfo}${newRows.toLocaleString("id-ID")} baris baru ditambahkan.${failedInfo}`, "warning").then(() => loadDashboard());
+          } else {
+            Swal.fire("Sebagian Gagal", `${resumeInfo}Tidak ada yang baru masuk.${failedInfo}`, "warning").then(() => loadDashboard());
+          }
+        } else if (newRows > 0) {
+          Swal.fire("Berhasil!", `${resumeInfo}${newRows.toLocaleString("id-ID")} baris baru ditambahkan.`, "success").then(() => loadDashboard());
         } else {
-          Swal.fire("Berhasil!", `${totalUploaded.toLocaleString("id-ID")} baris data berhasil diunggah!`, "success").then(() => loadDashboard());
+          Swal.fire("Tidak Ada Data Baru", `${resumeInfo}Semua baris dari file sudah ada di database (duplikat dilewati).`, "info").then(() => loadDashboard());
         }
       }
 
       function parseCSV(text) {
         if (text.charCodeAt(0) === 0xfeff) text = text.substring(1);
-        const rows = [];
-        let row = [];
-        let field = "";
-        let inQuotes = false;
-
-        for (let i = 0; i < text.length; i++) {
-          const ch = text[i];
-          const next = text[i + 1];
-
-          if (inQuotes) {
-            if (ch === '"') {
-              if (next === '"') {
-                field += '"';
-                i++;
-              } else {
-                inQuotes = false;
-              }
-            } else {
-              field += ch;
-            }
-          } else {
-            if (ch === '"') {
-              inQuotes = true;
-            } else if (ch === ",") {
-              row.push(field);
-              field = "";
-            } else if (ch === "\r") {
-              if (next === "\n") i++;
-              row.push(field);
-              field = "";
-              if (row.length > 0) rows.push(row);
-              row = [];
-            } else if (ch === "\n") {
-              row.push(field);
-              field = "";
-              if (row.length > 0) rows.push(row);
-              row = [];
-            } else {
-              field += ch;
-            }
-          }
-        }
-
-        if (field || row.length > 0) {
-          row.push(field);
-          if (row.length > 0) rows.push(row);
-        }
-
-        return rows;
+        const result = Papa.parse(text, { skipEmptyLines: "greedy" });
+        return result.data;
       }
 
       function downloadCSV() {
@@ -582,24 +587,28 @@
         });
       }
 
-      function showProgressBar(fileName, totalRows) {
+      function showProgressBar(fileName, totalBatches) {
         const el = document.getElementById("uploadProgress");
         el.classList.remove("hidden");
         document.getElementById("uploadFileName").textContent = fileName;
         document.getElementById("progressBar").style.width = "0%";
-        document.getElementById("progressText").textContent = `0 / ${totalRows.toLocaleString("id-ID")} baris`;
+        document.getElementById("progressText").textContent = `0 / ${totalBatches.toLocaleString("id-ID")} batch`;
         document.getElementById("progressPercent").textContent = "0%";
       }
 
-      function updateProgress(uploaded, total) {
-        const pct = Math.round((uploaded / total) * 100);
+      function updateProgress(processedBatches, totalBatches) {
+        const pct = Math.round((processedBatches / totalBatches) * 100);
         document.getElementById("progressBar").style.width = pct + "%";
-        document.getElementById("progressText").textContent = `${uploaded.toLocaleString("id-ID")} / ${total.toLocaleString("id-ID")} baris`;
+        document.getElementById("progressText").textContent = `${processedBatches.toLocaleString("id-ID")} / ${totalBatches.toLocaleString("id-ID")} batch`;
         document.getElementById("progressPercent").textContent = pct + "%";
       }
 
       function hideProgressBar() {
         document.getElementById("uploadProgress").classList.add("hidden");
+      }
+
+      function sleep(ms) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
       }
 
       function showLoading(title, text) {
